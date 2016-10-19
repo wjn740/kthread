@@ -7,6 +7,8 @@
 #include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/types.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
 
 
 
@@ -21,22 +23,26 @@ int delay = 60*HZ;
 j0 = jiffies;
 j1 = j0 + delay;
 
-while (time_before(jiffies, j1)){ 
-if(kthread_should_stop()) {
-do_exit(0);
-}
-  schedule();
-}
 printk(KERN_INFO "In thread1");
+while(!kthread_should_stop()) {
+  //schedule_timeout(10);
+  ssleep(10);
+  sum++;
+}
+do_exit(0);
 return 0;
 }
 
-void *kthread_seq_start(struct seq_file *sfile, loff_t *ops)
+void *kthread_seq_start(struct seq_file *sfile, loff_t *pos)
 {
+	if (*pos == 0) {
+		return sfile;
+	}	
     return NULL;
 }
 void *kthread_seq_next(struct seq_file *sfile, void *v, loff_t *pos)
 {
+	++(*pos);
     return NULL;
 }
 void kthread_seq_stop(struct seq_file *sfile, void *v)
@@ -45,7 +51,7 @@ void kthread_seq_stop(struct seq_file *sfile, void *v)
 }
 int kthread_seq_show(struct seq_file *sfile, void *v)
 {
-    seq_printf(sfile, "hello,world,%d", sum);
+    seq_printf(sfile, "hello,world,%d\n", sum);
     return 0;
 }
 
@@ -69,10 +75,11 @@ struct file_operations kthread_proc_fsops = {
     .release = seq_release
 };
 
+struct proc_dir_entry *entry;
+
 int thread_init (void) {
  
  char name[8]="thread1";
- struct proc_dir_entry *entry;
 
  entry = proc_create("apple7", 0, NULL, &kthread_proc_fsops);
  if (!entry)
@@ -92,6 +99,7 @@ int thread_init (void) {
 void thread_cleanup(void) {
  int ret;
  ret = kthread_stop(thread1);
+ proc_remove(entry);
  if(!ret)
   printk(KERN_INFO "Thread stopped");
 
