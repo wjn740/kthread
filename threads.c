@@ -29,12 +29,7 @@ int thread_init (void) {
  
  char name[8]="thread1";
  printk(KERN_INFO "in init");
- thread1 = kthread_create(thread_fn,NULL,name);
- if((thread1))
-  {
-  printk(KERN_INFO "in if");
-  wake_up_process(thread1);
-  }
+ thread1 = kthread_run(thread_fn,NULL,name);
 
  return 0;
 }
