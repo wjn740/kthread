@@ -18,6 +18,9 @@ j0 = jiffies;
 j1 = j0 + delay;
 
 while (time_before(jiffies, j1))
+    if (kthread_should_stop()) {
+        break;
+    }
         schedule();
 
 return 0;
