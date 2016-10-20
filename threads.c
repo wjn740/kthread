@@ -37,7 +37,7 @@ int kthread_server_fn(void *t)
     char buf[10] = {0};
     int len = 10;
     struct kvec iov = {buf, len};
-    struct msghdr msg = { .msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
+    struct msghdr msg = { .msg_flags = MSG_NOSIGNAL};
 
     error = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kserver.listen_socket);
     if (error < 0) {
@@ -67,29 +67,41 @@ int kthread_server_fn(void *t)
     //kserver.worker = kthread_run(kthread_worker_fn, NULL, WORKER_NAME);
 
 
-    
-    error = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &pworkersocket);
-    if (error < 0) {
-        printk(KERN_ERR "create workersocket failed\n");
-        do_exit(1);
-    }
+        printk(KERN_INFO "create the worker socket.\n");
+        error = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &pworkersocket);
+        if (error < 0) {
+            printk(KERN_ERR "create workersocket failed\n");
+            do_exit(1);
+        }
     
     while(!kthread_should_stop()) {
-        error = socket->ops->accept(socket, pworkersocket, O_NONBLOCK);
+        error = kernel_accept(socket, &pworkersocket, O_NONBLOCK);
+	if (error == -EAGAIN) {
+	    continue;
+	}
         if (error < 0) {
-            printk(KERN_ERR "accept failed\n");
+            printk(KERN_ERR "accept failed, %d.\n", error);
             sock_release(pworkersocket);
             do_exit(1);
         }
-        error = kernel_recvmsg(pworkersocket, &msg, &iov, 1, len, msg.msg_flags);
+        printk(KERN_INFO "client is online.\n");
+	memset(buf,0,10);
+        error = kernel_recvmsg(pworkersocket, &msg, &iov, 1, len-1, msg.msg_flags);
         if (error < 0) {
-            printk(KERN_ERR "accept failed\n");
+            printk(KERN_ERR "recvmsg failed. %d\n", error);
             sock_release(pworkersocket);
             do_exit(1);
         }
+	if (buf[error-1] == '\n') {
+        	printk(KERN_INFO "got it %#x.\n",buf[error-1]);
+        	printk(KERN_INFO "%x,%x,%x,%x,%x,%x\n", buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+	}
+	*(short int *)&buf[error-2] = 0x0;
         printk(KERN_INFO "recv msg: %s.\n", buf);
-
-        ssleep(10);
+        printk(KERN_INFO "%x,%x,%x,%x,%x,%x\n", buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+	kernel_sock_shutdown(pworkersocket, SHUT_RDWR);
+	set_current_state(TASK_RUNNING);
+	schedule();
         sum++;
     }
     do_exit(0);
@@ -160,8 +172,9 @@ void thread_cleanup(void) {
     int ret;
     ret = kthread_stop(thread1);
     proc_remove(entry);
+    kernel_sock_shutdown(kserver.listen_socket, SHUT_RDWR);
     if(!ret)
-        printk(KERN_INFO "Thread stopped");
+        printk(KERN_INFO "Thread stopped\n");
 
 }
 MODULE_LICENSE("GPL"); 
