@@ -9,40 +9,103 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/delay.h>
+#include <uapi/linux/in.h>
+#include <linux/net.h>
+#include <linux/socket.h>
+#include <net/sock.h>
 
+
+#define DEFAULT_PORT 2325
+#define WORKER_NAME kserver_worker
 
 
 static struct task_struct *thread1;
 static int sum;
 
+struct kthread_server {
+    struct socket *listen_socket;
+    struct task_struct *worker;
+}kserver;
 
-int thread_fn(void *t) {
+int kthread_server_fn(void *t)
+{
+    int error;
+    struct socket *socket;
+    struct sockaddr_in sin, sin_send;
+    struct socket workersocket;
+    struct socket *pworkersocket = &workersocket;
+    char buf[10] = {0};
+    int len = 10;
+    struct kvec iov = {buf, len};
+    struct msghdr msg = { .msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 
-unsigned long j0,j1;
-int delay = 60*HZ;
-j0 = jiffies;
-j1 = j0 + delay;
+    error = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kserver.listen_socket);
+    if (error < 0) {
+        printk(KERN_WARNING "socket create failed. Go Dead!\n");
+        do_exit(0);
+    }
 
-printk(KERN_INFO "In thread1");
-while(!kthread_should_stop()) {
-  //schedule_timeout(10);
-  ssleep(10);
-  sum++;
-}
-do_exit(0);
-return 0;
+    socket = kserver.listen_socket;
+    kserver.listen_socket->sk->sk_reuse = 1;
+    
+    sin.sin_addr.s_addr = htonl(INADDR_ANY);
+    sin.sin_family = AF_INET;
+    sin.sin_port = htons(DEFAULT_PORT);
+
+    error = socket->ops->bind(socket, (struct sockaddr*)&sin, sizeof(sin));
+    if (error < 0) {
+        printk(KERN_ERR "Bind address failed\n");
+        do_exit(1);
+    }
+
+    error = socket->ops->listen(socket, 5);
+    if (error < 0) {
+        printk(KERN_ERR "listen failed\n");
+        do_exit(1);
+    }
+
+    //kserver.worker = kthread_run(kthread_worker_fn, NULL, WORKER_NAME);
+
+
+    
+    error = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &pworkersocket);
+    if (error < 0) {
+        printk(KERN_ERR "create workersocket failed\n");
+        do_exit(1);
+    }
+    
+    while(!kthread_should_stop()) {
+        error = socket->ops->accept(socket, pworkersocket, O_NONBLOCK);
+        if (error < 0) {
+            printk(KERN_ERR "accept failed\n");
+            sock_release(pworkersocket);
+            do_exit(1);
+        }
+        error = kernel_recvmsg(pworkersocket, &msg, &iov, 1, len, msg.msg_flags);
+        if (error < 0) {
+            printk(KERN_ERR "accept failed\n");
+            sock_release(pworkersocket);
+            do_exit(1);
+        }
+        printk(KERN_INFO "recv msg: %s.\n", buf);
+
+        ssleep(10);
+        sum++;
+    }
+    do_exit(0);
+    return 0;
 }
 
 void *kthread_seq_start(struct seq_file *sfile, loff_t *pos)
 {
-	if (*pos == 0) {
-		return sfile;
-	}	
+    if (*pos == 0) {
+        return sfile;
+    }	
     return NULL;
 }
 void *kthread_seq_next(struct seq_file *sfile, void *v, loff_t *pos)
 {
-	++(*pos);
+    ++(*pos);
     return NULL;
 }
 void kthread_seq_stop(struct seq_file *sfile, void *v)
@@ -51,7 +114,7 @@ void kthread_seq_stop(struct seq_file *sfile, void *v)
 }
 int kthread_seq_show(struct seq_file *sfile, void *v)
 {
-    seq_printf(sfile, "hello,world,%d\n", sum);
+    seq_printf(sfile, "the sum is %d\n", sum);
     return 0;
 }
 
@@ -78,30 +141,27 @@ struct file_operations kthread_proc_fsops = {
 struct proc_dir_entry *entry;
 
 int thread_init (void) {
- 
- char name[8]="thread1";
 
- entry = proc_create("apple7", 0, NULL, &kthread_proc_fsops);
- if (!entry)
-     printk(KERN_WARNING "procfs interface create failed\n");
+    char name[20]={"Kthread_server"};
 
+    entry = proc_create("apple7", 0, NULL, &kthread_proc_fsops);
+    if (!entry)
+        printk(KERN_WARNING "procfs interface create failed\n");
 
- printk(KERN_INFO "in init");
- thread1 = kthread_run(thread_fn,NULL,name);
+    printk(KERN_INFO "in init");
+    thread1 = kthread_run(kthread_server_fn,NULL,name);
 
-
-
- return 0;
+    return 0;
 }
 
 
 
 void thread_cleanup(void) {
- int ret;
- ret = kthread_stop(thread1);
- proc_remove(entry);
- if(!ret)
-  printk(KERN_INFO "Thread stopped");
+    int ret;
+    ret = kthread_stop(thread1);
+    proc_remove(entry);
+    if(!ret)
+        printk(KERN_INFO "Thread stopped");
 
 }
 MODULE_LICENSE("GPL"); 
