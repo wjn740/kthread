@@ -77,6 +77,8 @@ int kthread_server_fn(void *t)
     while(!kthread_should_stop()) {
         error = kernel_accept(socket, &pworkersocket, O_NONBLOCK);
 	if (error == -EAGAIN) {
+	    set_current_state(TASK_RUNNING);
+	    schedule();
 	    continue;
 	}
         if (error < 0) {
